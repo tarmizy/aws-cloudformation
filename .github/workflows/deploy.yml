@@ -121,8 +121,8 @@ jobs:
       run: |
         echo "Monitoring deployment progress..."
         
-        # Maximum wait time: 5 minutes
-        MAX_ATTEMPTS=30
+        # Maximum wait time: 2 minutes
+        MAX_ATTEMPTS=12
         ATTEMPT=0
         SLEEP_TIME=10
         
@@ -190,7 +190,7 @@ jobs:
           
           ATTEMPT=$((ATTEMPT + 1))
           if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
-            echo "Deployment timed out after 5 minutes!"
+            echo "Deployment timed out after 2 minutes!"
             echo "Final service status:"
             aws ecs describe-services \
               --cluster $ECS_CLUSTER \
