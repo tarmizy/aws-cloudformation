@@ -60,7 +60,8 @@ jobs:
         {
           "family": "staging-web-app",
           "networkMode": "awsvpc",
-          "executionRoleArn": "arn:aws:iam::617692575193:role/web-app-ECSTaskExecutionRole-w7kZa8rToNWb",
+          "executionRoleArn": "arn:aws:iam::617692575193:role/ecsTaskExecutionRole",
+          "taskRoleArn": "arn:aws:iam::617692575193:role/ecsTaskRole",
           "containerDefinitions": [
             {
               "name": "web-app",
