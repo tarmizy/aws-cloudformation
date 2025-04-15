@@ -42,8 +42,15 @@ jobs:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
-        # Build a docker container and push it to ECR
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        # Build new image
+        echo "Building image with tag: $IMAGE_TAG"
+        docker build -t web-app:$IMAGE_TAG .
+
+        # Tag image for ECR
+        echo "Tagging image for ECR..."
+        docker tag web-app:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+        # Push image to ECR
         echo "Pushing image to ECR..."
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
@@ -83,16 +90,17 @@ jobs:
           --output text)
 
         echo "New task definition ARN: $NEW_TASK_DEF_ARN"
+        NEW_TASK_DEF_FAMILY=$(echo $NEW_TASK_DEF_ARN | cut -d/ -f2)
 
         # Update service with new task definition
         echo "Updating ECS service..."
         aws ecs update-service \
           --cluster $ECS_CLUSTER \
           --service $ECS_SERVICE \
-          --task-definition $(echo $NEW_TASK_DEF_ARN | cut -d/ -f2) \
+          --task-definition $NEW_TASK_DEF_FAMILY \
           --force-new-deployment
 
-    - name: Wait and check deployment status
+    - name: Wait and verify deployment
       run: |
         echo "Waiting for service to be stable..."
         aws ecs wait services-stable \
@@ -103,19 +111,33 @@ jobs:
         aws ecs describe-services \
           --cluster $ECS_CLUSTER \
           --services $ECS_SERVICE \
-          --query 'services[0].{status:status,runningCount:runningCount,pendingCount:pendingCount,deployments:deployments[0]}'
+          --query 'services[0].{Status:status,DesiredCount:desiredCount,RunningCount:runningCount,PendingCount:pendingCount,Events:events[0:3]}' \
+          --output table
 
-        # Get running tasks
+        echo "Checking running tasks..."
         TASKS=$(aws ecs list-tasks \
           --cluster $ECS_CLUSTER \
           --service-name $ECS_SERVICE \
+          --desired-status RUNNING \
           --query 'taskArns[]' \
           --output text)
 
         if [ ! -z "$TASKS" ]; then
-          echo "Checking running tasks..."
+          echo "Verifying task details..."
           aws ecs describe-tasks \
             --cluster $ECS_CLUSTER \
             --tasks $TASKS \
-            --query 'tasks[].{taskArn:taskArn,lastStatus:lastStatus,containers:containers[].{name:name,image:image,lastStatus:lastStatus}}'
+            --query 'tasks[].{TaskId:taskArn,Status:lastStatus,Image:containers[0].image,Started:startedAt,CPU:cpu,Memory:memory}' \
+            --output table
+        fi
+
+        # Get and display service URL
+        echo "Getting service URL..."
+        SERVICE_URL=$(aws cloudformation describe-stacks \
+          --stack-name $STACK_NAME \
+          --query 'Stacks[0].Outputs[?OutputKey==`ServiceURL`].OutputValue' \
+          --output text)
+        
+        if [ ! -z "$SERVICE_URL" ]; then
+          echo "Service is accessible at: $SERVICE_URL"
         fi
