@@ -121,8 +121,8 @@ jobs:
       run: |
         echo "Monitoring deployment progress..."
         
-        # Maximum wait time: 2 minutes
-        MAX_ATTEMPTS=12
+        # Maximum wait time: 5 minutes
+        MAX_ATTEMPTS=20
         ATTEMPT=0
         SLEEP_TIME=10
         
