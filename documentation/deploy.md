@@ -60,7 +60,7 @@ The template accepts the following parameters:
      --capabilities CAPABILITY_NAMED_IAM \
      --parameters \
        ParameterKey=Environment,ParameterValue=staging \
-       ParameterKey=ContainerImage,ParameterValue=YOUR_ECR_IMAGE_URI
+       ParameterKey=ContainerImage,ParameterValue=617692575193.dkr.ecr.ap-southeast-1.amazonaws.com/web-app:staging
    ```
 
 3. **Monitor the stack creation**:
@@ -95,7 +95,7 @@ To deploy a new version of your application:
    aws ecr get-login-password --region ap-southeast-1 | docker login --username AWS --password-stdin 617692575193.dkr.ecr.ap-southeast-1.amazonaws.com
 
    # Push image to ECR
-   docker push 617692575193.dkr.ecr.ap-southeast-1.amazonaws.com/web-app:latest
+   docker push 617692575193.dkr.ecr.ap-southeast-1.amazonaws.com/web-app:staging
    ```
 
 2. **Update ECS Service**:
@@ -185,7 +185,7 @@ To deploy a new version of your application:
 To delete all resources created by this stack:
 
 ```bash
-aws cloudformation delete-stack --stack-name web-app
+aws cloudformation delete-stack --stack-name web-app --region ap-southeast-1
 ```
 
 ## Security Considerations

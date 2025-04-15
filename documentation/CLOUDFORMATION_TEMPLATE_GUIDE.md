@@ -162,58 +162,190 @@ Outputs:
 - Fargate Service dengan desired count 2
 - Task Definition dengan container configuration
 
-## Deployment Steps
+## Deployment Steps untuk Simulasi
 
-### 1. Validasi Template
+### 1. Setup Environment
+
+```bash
+# Set environment variables
+export AWS_REGION=ap-southeast-1
+export STACK_NAME=web-app
+export ENVIRONMENT=staging
+
+# Dapatkan VPC ID default
+VPC_ID=$(aws ec2 describe-vpcs \
+  --filters "Name=isDefault,Values=true" \
+  --query 'Vpcs[0].VpcId' \
+  --output text \
+  --region $AWS_REGION)
+
+# Dapatkan Subnet IDs dari VPC default
+SUBNET_IDS=$(aws ec2 describe-subnets \
+  --filters "Name=vpc-id,Values=$VPC_ID" \
+  --query 'Subnets[?MapPublicIpOnLaunch==`true`].SubnetId' \
+  --output text \
+  --region $AWS_REGION)
+```
+
+### 2. Validasi Template
 
 ```bash
 # Validasi syntax template
 aws cloudformation validate-template \
   --template-body file://template.yaml \
-  --region REGION
+  --region $AWS_REGION
+
+# Expected output:
+# {
+#     "Parameters": [
+#         {
+#             "ParameterKey": "VpcId",
+#             "DefaultValue": "",
+#             "NoEcho": false,
+#             "Description": "ID of the VPC"
+#         },
+#         ...
+#     ]
+# }
 ```
 
-### 2. Create Stack
+### 3. Deploy Stack untuk Simulasi
 
 ```bash
-# Deploy stack baru
+# Create stack untuk simulasi
 aws cloudformation create-stack \
-  --stack-name web-app \
+  --stack-name $STACK_NAME \
   --template-body file://template.yaml \
   --parameters \
-    ParameterKey=VpcId,ParameterValue=vpc-xxxxx \
-    ParameterKey=SubnetIds,ParameterValue=subnet-xxxxx\\,subnet-yyyyy \
+    ParameterKey=VpcId,ParameterValue=$VPC_ID \
+    ParameterKey=SubnetIds,ParameterValue=\"${SUBNET_IDS// /,}\" \
+    ParameterKey=ServiceName,ParameterValue=$ENVIRONMENT-web-app \
+    ParameterKey=ContainerPort,ParameterValue=80 \
   --capabilities CAPABILITY_IAM \
-  --region REGION
+  --region $AWS_REGION
+
+# Expected output:
+# {
+#     "StackId": "arn:aws:cloudformation:ap-southeast-1:123456789012:stack/web-app/..."
+# }
 ```
 
-### 3. Update Stack
+### 4. Monitor Deployment
+
+```bash
+# Monitor creation progress
+watch -n 5 "aws cloudformation describe-stacks \
+  --stack-name $STACK_NAME \
+  --query 'Stacks[0].StackStatus' \
+  --region $AWS_REGION"
+
+# Expected output sequence:
+# "CREATE_IN_PROGRESS"
+# ...
+# "CREATE_COMPLETE"
+```
+
+### 5. Verifikasi Resources
+
+```bash
+# Get stack outputs (termasuk ALB URL)
+aws cloudformation describe-stacks \
+  --stack-name $STACK_NAME \
+  --query 'Stacks[0].Outputs' \
+  --region $AWS_REGION
+
+# Expected output:
+# [
+#     {
+#         "OutputKey": "ServiceURL",
+#         "OutputValue": "http://web-app-alb-123456789.ap-southeast-1.elb.amazonaws.com"
+#     },
+#     ...
+# ]
+
+# Cek ECS Service
+aws ecs describe-services \
+  --cluster $ENVIRONMENT-web-app \
+  --services $ENVIRONMENT-web-app \
+  --region $AWS_REGION
+
+# Expected output:
+# {
+#     "services": [
+#         {
+#             "serviceName": "staging-web-app",
+#             "desiredCount": 2,
+#             "runningCount": 2,
+#             ...
+#         }
+#     ]
+# }
+```
+
+### 6. Test Aplikasi
+
+```bash
+# Get Service URL
+SERVICE_URL=$(aws cloudformation describe-stacks \
+  --stack-name $STACK_NAME \
+  --query 'Stacks[0].Outputs[?OutputKey==`ServiceURL`].OutputValue' \
+  --output text \
+  --region $AWS_REGION)
+
+# Test endpoint
+curl -v $SERVICE_URL
+
+# Expected output:
+# * Connected to web-app-alb-123456789.ap-southeast-1.elb.amazonaws.com
+# > GET / HTTP/1.1
+# < HTTP/1.1 200 OK
+# <!DOCTYPE html>
+# <html lang="en">
+#     <head>
+#         <title>Cloud Engineer I'm</title>
+#         ...
+```
+
+### 7. Update Stack (Jika Diperlukan)
 
 ```bash
 # Update existing stack
 aws cloudformation update-stack \
-  --stack-name web-app \
+  --stack-name $STACK_NAME \
   --template-body file://template.yaml \
   --parameters \
-    ParameterKey=VpcId,ParameterValue=vpc-xxxxx \
-    ParameterKey=SubnetIds,ParameterValue=subnet-xxxxx\\,subnet-yyyyy \
+    ParameterKey=VpcId,ParameterValue=$VPC_ID \
+    ParameterKey=SubnetIds,ParameterValue=\"${SUBNET_IDS// /,}\" \
+    ParameterKey=ServiceName,ParameterValue=$ENVIRONMENT-web-app \
+    ParameterKey=ContainerPort,ParameterValue=80 \
   --capabilities CAPABILITY_IAM \
-  --region REGION
+  --region $AWS_REGION
+
+# Monitor update
+watch -n 5 "aws cloudformation describe-stack-events \
+  --stack-name $STACK_NAME \
+  --query 'StackEvents[0]' \
+  --region $AWS_REGION"
 ```
 
-### 4. Monitor Stack
+### 8. Cleanup Simulasi
 
 ```bash
-# Monitor stack events
-aws cloudformation describe-stack-events \
-  --stack-name web-app \
-  --region REGION
+# Delete stack dan semua resources
+aws cloudformation delete-stack \
+  --stack-name $STACK_NAME \
+  --region $AWS_REGION
 
-# Get stack outputs
-aws cloudformation describe-stacks \
-  --stack-name web-app \
-  --query 'Stacks[0].Outputs' \
-  --region REGION
+# Monitor deletion
+watch -n 5 "aws cloudformation describe-stacks \
+  --stack-name $STACK_NAME \
+  --query 'Stacks[0].StackStatus' \
+  --region $AWS_REGION"
+
+# Expected output sequence:
+# "DELETE_IN_PROGRESS"
+# ...
+# "DELETE_COMPLETE"
 ```
 
 ## Parameter Configuration
