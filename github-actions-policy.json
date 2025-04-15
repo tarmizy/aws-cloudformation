@@ -47,12 +47,29 @@
         {
             "Effect": "Allow",
             "Action": [
+                "iam:GetRole",
                 "iam:PassRole"
             ],
             "Resource": [
                 "arn:aws:iam::617692575193:role/ecsTaskExecutionRole",
-                "arn:aws:iam::617692575193:role/ecsTaskRole"
+                "arn:aws:iam::617692575193:role/ecsTaskRole",
+                "arn:aws:iam::617692575193:role/staging-web-app-execution-role"
             ]
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "cloudformation:DescribeStacks"
+            ],
+            "Resource": "arn:aws:cloudformation:ap-southeast-1:617692575193:stack/web-app/*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": [
+                "logs:CreateLogStream",
+                "logs:PutLogEvents"
+            ],
+            "Resource": "arn:aws:logs:ap-southeast-1:617692575193:log-group:/ecs/staging-web-app:*"
         }
     ]
 }

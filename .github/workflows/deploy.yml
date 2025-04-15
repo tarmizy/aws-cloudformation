@@ -100,14 +100,53 @@ jobs:
           --task-definition $NEW_TASK_DEF_FAMILY \
           --force-new-deployment
 
-    - name: Wait and verify deployment
+    - name: Monitor deployment
       run: |
-        echo "Waiting for service to be stable..."
-        aws ecs wait services-stable \
-          --cluster $ECS_CLUSTER \
-          --services $ECS_SERVICE
+        echo "Monitoring deployment progress..."
+        
+        # Maximum wait time: 5 minutes
+        MAX_ATTEMPTS=30
+        ATTEMPT=0
+        SLEEP_TIME=10
+        
+        while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
+          # Get deployment status
+          DEPLOYMENT_STATUS=$(aws ecs describe-services \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE \
+            --query 'services[0].deployments[0].{status:rolloutState,running:runningCount,pending:pendingCount,desired:desiredCount}' \
+            --output json)
+          
+          echo "Deployment Status (Attempt $ATTEMPT):"
+          echo "$DEPLOYMENT_STATUS" | jq '.'
+          
+          # Check if deployment is complete
+          ROLLOUT_STATE=$(echo $DEPLOYMENT_STATUS | jq -r '.status')
+          RUNNING_COUNT=$(echo $DEPLOYMENT_STATUS | jq -r '.running')
+          DESIRED_COUNT=$(echo $DEPLOYMENT_STATUS | jq -r '.desired')
+          
+          if [ "$ROLLOUT_STATE" = "COMPLETED" ] && [ "$RUNNING_COUNT" = "$DESIRED_COUNT" ]; then
+            echo "Deployment completed successfully!"
+            break
+          elif [ "$ROLLOUT_STATE" = "FAILED" ]; then
+            echo "Deployment failed!"
+            exit 1
+          fi
+          
+          ATTEMPT=$((ATTEMPT + 1))
+          if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
+            echo "Deployment timed out after 5 minutes!"
+            exit 1
+          fi
+          
+          echo "Waiting $SLEEP_TIME seconds before next check..."
+          sleep $SLEEP_TIME
+        done
 
-        echo "Getting deployment status..."
+    - name: Verify deployment
+      if: success()
+      run: |
+        echo "Getting final deployment status..."
         aws ecs describe-services \
           --cluster $ECS_CLUSTER \
           --services $ECS_SERVICE \
