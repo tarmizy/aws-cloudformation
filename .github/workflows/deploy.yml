@@ -53,7 +53,7 @@ jobs:
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
         echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-    - name: Update CloudFormation stack
+    - name: Update ECS Service
       run: |
         # Create base task definition
         TASK_DEF=$(cat << EOF
@@ -98,25 +98,43 @@ jobs:
         )
 
         # Register new task definition
-        aws ecs register-task-definition \
-          --cli-input-json "$TASK_DEF"
+        NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
+          --cli-input-json "$TASK_DEF" \
+          --query 'taskDefinition.taskDefinitionArn' \
+          --output text)
 
-        # Update CloudFormation stack
-        aws cloudformation update-stack \
-          --stack-name $STACK_NAME \
-          --template-body file://template.yaml \
-          --parameters \
-            ParameterKey=ContainerImage,ParameterValue=${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:${{ env.IMAGE_TAG }} \
-          --capabilities CAPABILITY_NAMED_IAM
-
-    - name: Wait for stack update
-      run: |
-        aws cloudformation wait stack-update-complete \
-          --stack-name $STACK_NAME
+        # Update ECS service with new task definition
+        aws ecs update-service \
+          --cluster $ECS_CLUSTER \
+          --service $ECS_SERVICE \
+          --task-definition $NEW_TASK_DEF_ARN \
+          --force-new-deployment
 
     - name: Check deployment status
       run: |
+        echo "Waiting for service to be stable..."
+        aws ecs wait services-stable \
+          --cluster $ECS_CLUSTER \
+          --services $ECS_SERVICE
+
+        echo "Getting deployment status..."
         aws ecs describe-services \
           --cluster $ECS_CLUSTER \
           --services $ECS_SERVICE \
-          --query 'services[0].deployments'
+          --query 'services[0].deployments' \
+          --output json
+
+        echo "Getting task status..."
+        TASK_ARN=$(aws ecs list-tasks \
+          --cluster $ECS_CLUSTER \
+          --service-name $ECS_SERVICE \
+          --query 'taskArns[0]' \
+          --output text)
+
+        if [ ! -z "$TASK_ARN" ]; then
+          aws ecs describe-tasks \
+            --cluster $ECS_CLUSTER \
+            --tasks $TASK_ARN \
+            --query 'tasks[0].containers[0].lastStatus' \
+            --output text
+        fi
