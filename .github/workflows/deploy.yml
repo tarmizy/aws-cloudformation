@@ -14,6 +14,7 @@ env:
   ECS_CLUSTER: staging-web-app-cluster
   ECS_SERVICE: staging-web-app
   STACK_NAME: web-app
+  ENVIRONMENT: staging
 
 jobs:
   build-and-deploy:
@@ -40,19 +41,23 @@ jobs:
       id: build-image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: ${{ github.sha }}
+        IMAGE_TAG: ${{ env.ENVIRONMENT }}-${{ github.sha }}
       run: |
         # Build new image
         echo "Building image with tag: $IMAGE_TAG"
         docker build -t web-app:$IMAGE_TAG .
 
-        # Tag image for ECR
+        # Tag image for ECR with both specific tag and environment tag
         echo "Tagging image for ECR..."
         docker tag web-app:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker tag web-app:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:$ENVIRONMENT
 
-        # Push image to ECR
-        echo "Pushing image to ECR..."
+        # Push both tags to ECR
+        echo "Pushing images to ECR..."
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$ENVIRONMENT
+        
+        # Set the specific tag as output
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
     - name: Update ECS Service
@@ -92,12 +97,23 @@ jobs:
         echo "New task definition ARN: $NEW_TASK_DEF_ARN"
         NEW_TASK_DEF_FAMILY=$(echo $NEW_TASK_DEF_ARN | cut -d/ -f2)
 
+        # Get current service configuration
+        echo "Getting current service configuration..."
+        SERVICE_CONFIG=$(aws ecs describe-services \
+          --cluster $ECS_CLUSTER \
+          --services $ECS_SERVICE \
+          --query 'services[0].{desiredCount:desiredCount,deploymentConfiguration:deploymentConfiguration}' \
+          --output json)
+        
+        DESIRED_COUNT=$(echo $SERVICE_CONFIG | jq -r '.desiredCount')
+
         # Update service with new task definition
-        echo "Updating ECS service..."
+        echo "Updating ECS service with desired count: $DESIRED_COUNT..."
         aws ecs update-service \
           --cluster $ECS_CLUSTER \
           --service $ECS_SERVICE \
           --task-definition $NEW_TASK_DEF_FAMILY \
+          --desired-count $DESIRED_COUNT \
           --force-new-deployment
 
     - name: Monitor deployment
@@ -120,6 +136,31 @@ jobs:
           echo "Deployment Status (Attempt $ATTEMPT):"
           echo "$DEPLOYMENT_STATUS" | jq '.'
           
+          # Check service events for any issues
+          echo "Recent service events:"
+          aws ecs describe-services \
+            --cluster $ECS_CLUSTER \
+            --services $ECS_SERVICE \
+            --query 'services[0].events[0:3]' \
+            --output text
+          
+          # Check if there are any stopped tasks
+          STOPPED_TASKS=$(aws ecs list-tasks \
+            --cluster $ECS_CLUSTER \
+            --service-name $ECS_SERVICE \
+            --desired-status STOPPED \
+            --query 'taskArns[]' \
+            --output text)
+          
+          if [ ! -z "$STOPPED_TASKS" ]; then
+            echo "Found stopped tasks. Checking their status..."
+            aws ecs describe-tasks \
+              --cluster $ECS_CLUSTER \
+              --tasks $STOPPED_TASKS \
+              --query 'tasks[].{taskArn:taskArn,lastStatus:lastStatus,stoppedReason:stoppedReason,containers:containers[].{name:name,reason:reason,exitCode:exitCode}}' \
+              --output json | jq '.'
+          fi
+          
           # Check if deployment is complete
           ROLLOUT_STATE=$(echo $DEPLOYMENT_STATUS | jq -r '.status')
           RUNNING_COUNT=$(echo $DEPLOYMENT_STATUS | jq -r '.running')
@@ -136,6 +177,12 @@ jobs:
           ATTEMPT=$((ATTEMPT + 1))
           if [ $ATTEMPT -eq $MAX_ATTEMPTS ]; then
             echo "Deployment timed out after 5 minutes!"
+            echo "Final service status:"
+            aws ecs describe-services \
+              --cluster $ECS_CLUSTER \
+              --services $ECS_SERVICE \
+              --query 'services[0].{status:status,events:events[0:5],deployments:deployments[0]}' \
+              --output json | jq '.'
             exit 1
           fi
           
@@ -149,7 +196,7 @@ jobs:
         echo "Getting final deployment status..."
         aws ecs describe-services \
           --cluster $ECS_CLUSTER \
-          --services $ECS_SERVICE \
+          --service $ECS_SERVICE \
           --query 'services[0].{Status:status,DesiredCount:desiredCount,RunningCount:runningCount,PendingCount:pendingCount,Events:events[0:3]}' \
           --output table
 
