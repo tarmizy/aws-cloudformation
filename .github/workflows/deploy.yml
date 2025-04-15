@@ -39,7 +39,6 @@ jobs:
     - name: Generate image tag
       id: tag
       run: |
-        # Using GitHub run number and short SHA for versioning
         echo "IMAGE_TAG=${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}" >> $GITHUB_ENV
 
     - name: Build and push image to ECR
@@ -56,34 +55,31 @@ jobs:
 
     - name: Update CloudFormation stack
       run: |
-        # Get the current task definition
-        TASK_DEF_ARN=$(aws ecs describe-services \
-          --cluster $ECS_CLUSTER \
-          --services $ECS_SERVICE \
-          --query 'services[0].taskDefinition' \
-          --output text)
-        
-        TASK_DEF_FAMILY=$(aws ecs describe-task-definition \
-          --task-definition $TASK_DEF_ARN \
-          --query 'taskDefinition.family' \
-          --output text)
-
-        # Create new task definition with updated image
+        # Get current task definition
         TASK_DEF=$(aws ecs describe-task-definition \
-          --task-definition $TASK_DEF_ARN \
-          --query 'taskDefinition' \
-          --output json | \
-          jq --arg IMAGE "${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:${{ env.IMAGE_TAG }}" \
+          --task-definition staging-web-app:1 \
+          --query '{
+            family: taskDefinition.family,
+            executionRoleArn: taskDefinition.executionRoleArn,
+            networkMode: taskDefinition.networkMode,
+            containerDefinitions: taskDefinition.containerDefinitions,
+            requiresCompatibilities: taskDefinition.requiresCompatibilities,
+            cpu: taskDefinition.cpu,
+            memory: taskDefinition.memory,
+            runtimePlatform: taskDefinition.runtimePlatform
+          }' \
+          --output json)
+
+        # Update container image in task definition
+        UPDATED_TASK_DEF=$(echo $TASK_DEF | \
+          jq --arg IMAGE "${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}" \
           '.containerDefinitions[0].image = $IMAGE')
 
         # Register new task definition
-        NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
-          --family $TASK_DEF_FAMILY \
-          --cli-input-json "$TASK_DEF" \
-          --query 'taskDefinition.taskDefinitionArn' \
-          --output text)
+        aws ecs register-task-definition \
+          --cli-input-json "$UPDATED_TASK_DEF"
 
-        # Update CloudFormation stack with new task definition
+        # Update CloudFormation stack
         aws cloudformation update-stack \
           --stack-name $STACK_NAME \
           --template-body file://aws-cloudformation/web-app/template.yaml \
@@ -102,4 +98,3 @@ jobs:
           --cluster $ECS_CLUSTER \
           --services $ECS_SERVICE \
           --query 'services[0].deployments'
-
