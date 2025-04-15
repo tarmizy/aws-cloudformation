@@ -55,29 +55,51 @@ jobs:
 
     - name: Update CloudFormation stack
       run: |
-        # Get current task definition
-        TASK_DEF=$(aws ecs describe-task-definition \
-          --task-definition staging-web-app:1 \
-          --query '{
-            family: taskDefinition.family,
-            executionRoleArn: taskDefinition.executionRoleArn,
-            networkMode: taskDefinition.networkMode,
-            containerDefinitions: taskDefinition.containerDefinitions,
-            requiresCompatibilities: taskDefinition.requiresCompatibilities,
-            cpu: taskDefinition.cpu,
-            memory: taskDefinition.memory,
-            runtimePlatform: taskDefinition.runtimePlatform
-          }' \
-          --output json)
-
-        # Update container image in task definition
-        UPDATED_TASK_DEF=$(echo $TASK_DEF | \
-          jq --arg IMAGE "${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}" \
-          '.containerDefinitions[0].image = $IMAGE')
+        # Create base task definition
+        TASK_DEF=$(cat << EOF
+        {
+          "family": "staging-web-app",
+          "networkMode": "awsvpc",
+          "executionRoleArn": "arn:aws:iam::617692575193:role/web-app-ECSTaskExecutionRole-w7kZa8rToNWb",
+          "containerDefinitions": [
+            {
+              "name": "web-app",
+              "image": "${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}",
+              "cpu": 0,
+              "portMappings": [
+                {
+                  "containerPort": 80,
+                  "hostPort": 80,
+                  "protocol": "tcp"
+                }
+              ],
+              "essential": true,
+              "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                  "awslogs-group": "/ecs/staging-web-app",
+                  "awslogs-region": "ap-southeast-1",
+                  "awslogs-stream-prefix": "ecs"
+                }
+              }
+            }
+          ],
+          "requiresCompatibilities": [
+            "FARGATE"
+          ],
+          "cpu": "512",
+          "memory": "1024",
+          "runtimePlatform": {
+            "cpuArchitecture": "ARM64",
+            "operatingSystemFamily": "LINUX"
+          }
+        }
+        EOF
+        )
 
         # Register new task definition
         aws ecs register-task-definition \
-          --cli-input-json "$UPDATED_TASK_DEF"
+          --cli-input-json "$TASK_DEF"
 
         # Update CloudFormation stack
         aws cloudformation update-stack \
