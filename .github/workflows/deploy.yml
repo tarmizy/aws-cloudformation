@@ -52,15 +52,28 @@ jobs:
       run: |
         echo "Creating new task definition using image: ${{ steps.build-image.outputs.image }}"
         
-        # Get current task definition
+        # Get current task definition and clean it
         TASK_DEF=$(aws ecs describe-task-definition \
           --task-definition staging-web-app \
-          --query 'taskDefinition' \
+          --query 'taskDefinition | {
+            family: family,
+            taskRoleArn: taskRoleArn,
+            executionRoleArn: executionRoleArn,
+            networkMode: networkMode,
+            containerDefinitions: containerDefinitions,
+            requiresCompatibilities: requiresCompatibilities,
+            cpu: cpu,
+            memory: memory,
+            runtimePlatform: runtimePlatform
+          }' \
           --output json)
 
         # Update image in task definition
         NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "${{ steps.build-image.outputs.image }}" \
           '.containerDefinitions[0].image = $IMAGE')
+
+        echo "New task definition:"
+        echo "$NEW_TASK_DEF" | jq '.'
 
         # Register new task definition
         echo "Registering new task definition..."
