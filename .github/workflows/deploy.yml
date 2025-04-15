@@ -11,7 +11,6 @@ on:
 env:
   AWS_REGION: ap-southeast-1
   ECR_REPOSITORY: web-app
-  ECR_REGISTRY: 617692575193.dkr.ecr.ap-southeast-1.amazonaws.com
   ECS_CLUSTER: staging-web-app-cluster
   ECS_SERVICE: staging-web-app
   STACK_NAME: web-app
@@ -45,11 +44,14 @@ jobs:
 
     - name: Build and push image to ECR
       env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ env.IMAGE_TAG }}
       run: |
-        # Build with specific tag
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        # Also tag as latest
+        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
         echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
     - name: Update CloudFormation stack
@@ -71,11 +73,12 @@ jobs:
           --task-definition $TASK_DEF_ARN \
           --query 'taskDefinition' \
           --output json | \
-          jq --arg IMAGE "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
-          '.containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities)')
+          jq --arg IMAGE "${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:${{ env.IMAGE_TAG }}" \
+          '.containerDefinitions[0].image = $IMAGE')
 
         # Register new task definition
         NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
+          --family $TASK_DEF_FAMILY \
           --cli-input-json "$TASK_DEF" \
           --query 'taskDefinition.taskDefinitionArn' \
           --output text)
@@ -85,7 +88,7 @@ jobs:
           --stack-name $STACK_NAME \
           --template-body file://aws-cloudformation/web-app/template.yaml \
           --parameters \
-            ParameterKey=ContainerImage,ParameterValue=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            ParameterKey=ContainerImage,ParameterValue=${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:${{ env.IMAGE_TAG }} \
           --capabilities CAPABILITY_NAMED_IAM
 
     - name: Wait for stack update
