@@ -36,81 +36,47 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
 
-    - name: Generate image tag
-      id: tag
-      run: |
-        echo "IMAGE_TAG=${GITHUB_SHA}" >> $GITHUB_ENV
-
     - name: Build and push image to ECR
+      id: build-image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        IMAGE_TAG: ${{ github.sha }}
       run: |
         # Build a docker container and push it to ECR
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
         echo "Pushing image to ECR..."
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-        # Also tag as latest
-        docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-        docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-        echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
     - name: Update ECS Service
       run: |
-        # Create base task definition
-        TASK_DEF=$(cat << EOF
-        {
-          "family": "staging-web-app",
-          "networkMode": "awsvpc",
-          "executionRoleArn": "arn:aws:iam::617692575193:role/ecsTaskExecutionRole",
-          "taskRoleArn": "arn:aws:iam::617692575193:role/ecsTaskRole",
-          "containerDefinitions": [
-            {
-              "name": "web-app",
-              "image": "${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}",
-              "cpu": 0,
-              "portMappings": [
-                {
-                  "containerPort": 80,
-                  "hostPort": 80,
-                  "protocol": "tcp"
-                }
-              ],
-              "essential": true,
-              "logConfiguration": {
-                "logDriver": "awslogs",
-                "options": {
-                  "awslogs-group": "/ecs/staging-web-app",
-                  "awslogs-region": "ap-southeast-1",
-                  "awslogs-stream-prefix": "ecs"
-                }
-              }
-            }
-          ],
-          "requiresCompatibilities": [
-            "FARGATE"
-          ],
-          "cpu": "512",
-          "memory": "1024",
-          "runtimePlatform": {
-            "cpuArchitecture": "ARM64",
-            "operatingSystemFamily": "LINUX"
-          }
-        }
-        EOF
-        )
+        echo "Creating new task definition using image: ${{ steps.build-image.outputs.image }}"
+        
+        # Get current task definition
+        TASK_DEF=$(aws ecs describe-task-definition \
+          --task-definition staging-web-app \
+          --query 'taskDefinition' \
+          --output json)
 
+        # Update image in task definition
+        NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "${{ steps.build-image.outputs.image }}" \
+          '.containerDefinitions[0].image = $IMAGE')
+
+        # Register new task definition
         echo "Registering new task definition..."
         NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
-          --cli-input-json "$TASK_DEF" \
+          --cli-input-json "$NEW_TASK_DEF" \
           --query 'taskDefinition.taskDefinitionArn' \
           --output text)
 
+        echo "New task definition ARN: $NEW_TASK_DEF_ARN"
+
+        # Update service with new task definition
         echo "Updating ECS service..."
         aws ecs update-service \
           --cluster $ECS_CLUSTER \
           --service $ECS_SERVICE \
-          --task-definition $NEW_TASK_DEF_ARN \
+          --task-definition $(echo $NEW_TASK_DEF_ARN | cut -d/ -f2) \
           --force-new-deployment
 
     - name: Wait and check deployment status
@@ -124,20 +90,19 @@ jobs:
         aws ecs describe-services \
           --cluster $ECS_CLUSTER \
           --services $ECS_SERVICE \
-          --query 'services[0].deployments' \
-          --output table
+          --query 'services[0].{status:status,runningCount:runningCount,pendingCount:pendingCount,deployments:deployments[0]}'
 
-        echo "Getting task status..."
-        TASK_ARN=$(aws ecs list-tasks \
+        # Get running tasks
+        TASKS=$(aws ecs list-tasks \
           --cluster $ECS_CLUSTER \
           --service-name $ECS_SERVICE \
-          --query 'taskArns[0]' \
+          --query 'taskArns[]' \
           --output text)
 
-        if [ ! -z "$TASK_ARN" ]; then
+        if [ ! -z "$TASKS" ]; then
+          echo "Checking running tasks..."
           aws ecs describe-tasks \
             --cluster $ECS_CLUSTER \
-            --tasks $TASK_ARN \
-            --query 'tasks[0].containers[0].lastStatus' \
-            --output text
+            --tasks $TASKS \
+            --query 'tasks[].{taskArn:taskArn,lastStatus:lastStatus,containers:containers[].{name:name,image:image,lastStatus:lastStatus}}'
         fi
