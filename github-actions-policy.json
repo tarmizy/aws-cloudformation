@@ -67,10 +67,17 @@
         {
             "Effect": "Allow",
             "Action": [
+                "logs:CreateLogGroup",
                 "logs:CreateLogStream",
-                "logs:PutLogEvents"
+                "logs:PutLogEvents",
+                "logs:GetLogEvents",
+                "logs:DescribeLogStreams",
+                "logs:DescribeLogGroups"
             ],
-            "Resource": "arn:aws:logs:ap-southeast-1:617692575193:log-group:/ecs/staging-web-app:*"
+            "Resource": [
+                "arn:aws:logs:ap-southeast-1:617692575193:log-group:/ecs/staging-web-app:*",
+                "arn:aws:logs:ap-southeast-1:617692575193:log-group:/ecs/staging-web-app:log-stream:*"
+            ]
         }
     ]
 }
