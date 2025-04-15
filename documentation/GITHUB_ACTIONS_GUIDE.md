@@ -46,13 +46,16 @@ graph TD
 2. **ECS Cluster**: `staging-web-app-cluster`
 3. **ECS Service**: `staging-web-app`
 4. **IAM Roles**:
-   - `ecsTaskRole`
-   - `ecsTaskExecutionRole`
-   - `github-actions-role`
+   - `ecsTaskRole` (see `/role-aws/ecs-task-role-policy.json`)
+   - `ecsTaskExecutionRole` (see `/role-aws/ecs-task-execution-policy.json`)
+   - `github-actions-role` (see `/role-aws/github-actions-policy.json`)
 
 ## Required Permissions
 
 ### GitHub Actions Role
+See full policy in `/role-aws/github-actions-policy.json`
+
+Key permissions:
 ```json
 {
     "Version": "2012-10-17",
@@ -69,9 +72,7 @@ graph TD
             "Resource": [
                 "arn:aws:ecr:region:account:repository/web-app",
                 "arn:aws:ecs:region:account:cluster/staging-web-app-cluster",
-                "arn:aws:ecs:region:account:service/staging-web-app-cluster/staging-web-app",
-                "arn:aws:iam::account:role/ecsTaskRole",
-                "arn:aws:iam::account:role/ecsTaskExecutionRole"
+                "arn:aws:ecs:region:account:service/staging-web-app-cluster/staging-web-app"
             ]
         }
     ]
@@ -98,9 +99,12 @@ graph TD
    # Create ECS Cluster
    aws ecs create-cluster --cluster-name staging-web-app-cluster
    
-   # Create IAM Roles
-   aws iam create-role --role-name ecsTaskRole
-   aws iam create-role --role-name ecsTaskExecutionRole
+   # Create IAM Roles using policies in /role-aws/
+   aws iam create-role --role-name ecsTaskRole --assume-role-policy-document file://role-aws/task-role-trust-policy.json
+   aws iam put-role-policy --role-name ecsTaskRole --policy-name ecsTaskPolicy --policy-document file://role-aws/ecs-task-role-policy.json
+   
+   aws iam create-role --role-name ecsTaskExecutionRole --assume-role-policy-document file://role-aws/task-role-trust-policy.json
+   aws iam put-role-policy --role-name ecsTaskExecutionRole --policy-name ecsTaskExecutionPolicy --policy-document file://role-aws/ecs-task-execution-policy.json
    ```
 
 3. **Configure OIDC in AWS**
@@ -164,6 +168,26 @@ graph TD
    - Verify Environment Variables
    - Check ALB Target Group Health
 
+## Project Structure
+
+```
+.
+├── .github/
+│   └── workflows/
+│       └── deploy.yml      # GitHub Actions workflow
+├── documentation/
+│   ├── GITHUB_ACTIONS_GUIDE.md  # This guide
+│   └── other-docs.md      # Other documentation
+├── role-aws/
+│   ├── github-actions-policy.json    # GitHub Actions IAM policy
+│   ├── ecs-task-role-policy.json     # ECS Task Role policy
+│   ├── ecs-task-execution-policy.json # ECS Task Execution Role policy
+│   └── task-role-trust-policy.json   # Trust policy for ECS roles
+├── Dockerfile             # Container image definition
+├── nginx.conf            # Nginx configuration
+└── index.html            # Web application entry point
+```
+
 ## Best Practices
 
 1. **Version Control**
@@ -184,13 +208,13 @@ graph TD
 ## Deployment Timeouts
 
 The deployment monitoring is configured with the following parameters:
-- Maximum wait time: 2 minutes
+- Maximum wait time: 3.33 minutes
 - Check interval: 10 seconds
-- Maximum attempts: 12
+- Maximum attempts: 20
 
 To modify these settings, update the following variables in `.github/workflows/deploy.yml`:
 ```yaml
-MAX_ATTEMPTS=12    # Number of attempts
+MAX_ATTEMPTS=20    # Number of attempts
 SLEEP_TIME=10     # Seconds between attempts
 ```
 
