@@ -1,0 +1,101 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'Dockerfile'
+      - '.github/workflows/deploy.yml'
+
+env:
+  AWS_REGION: ap-southeast-1
+  ECR_REPOSITORY: web-app
+  ECR_REGISTRY: 617692575193.dkr.ecr.ap-southeast-1.amazonaws.com
+  ECS_CLUSTER: staging-web-app-cluster
+  ECS_SERVICE: staging-web-app
+  STACK_NAME: web-app
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Generate image tag
+      id: tag
+      run: |
+        # Using GitHub run number and short SHA for versioning
+        echo "IMAGE_TAG=${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+    - name: Build and push image to ECR
+      env:
+        IMAGE_TAG: ${{ env.IMAGE_TAG }}
+      run: |
+        # Build with specific tag
+        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        echo "::set-output name=image::$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+    - name: Update CloudFormation stack
+      run: |
+        # Get the current task definition
+        TASK_DEF_ARN=$(aws ecs describe-services \
+          --cluster $ECS_CLUSTER \
+          --services $ECS_SERVICE \
+          --query 'services[0].taskDefinition' \
+          --output text)
+        
+        TASK_DEF_FAMILY=$(aws ecs describe-task-definition \
+          --task-definition $TASK_DEF_ARN \
+          --query 'taskDefinition.family' \
+          --output text)
+
+        # Create new task definition with updated image
+        TASK_DEF=$(aws ecs describe-task-definition \
+          --task-definition $TASK_DEF_ARN \
+          --query 'taskDefinition' \
+          --output json | \
+          jq --arg IMAGE "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+          '.containerDefinitions[0].image = $IMAGE | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities)')
+
+        # Register new task definition
+        NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
+          --cli-input-json "$TASK_DEF" \
+          --query 'taskDefinition.taskDefinitionArn' \
+          --output text)
+
+        # Update CloudFormation stack with new task definition
+        aws cloudformation update-stack \
+          --stack-name $STACK_NAME \
+          --template-body file://aws-cloudformation/web-app/template.yaml \
+          --parameters \
+            ParameterKey=ContainerImage,ParameterValue=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+          --capabilities CAPABILITY_NAMED_IAM
+
+    - name: Wait for stack update
+      run: |
+        aws cloudformation wait stack-update-complete \
+          --stack-name $STACK_NAME
+
+    - name: Check deployment status
+      run: |
+        aws ecs describe-services \
+          --cluster $ECS_CLUSTER \
+          --services $ECS_SERVICE \
+          --query 'services[0].deployments'
