@@ -53,7 +53,8 @@
             "Resource": [
                 "arn:aws:iam::617692575193:role/ecsTaskExecutionRole",
                 "arn:aws:iam::617692575193:role/ecsTaskRole",
-                "arn:aws:iam::617692575193:role/staging-web-app-execution-role"
+                "arn:aws:iam::617692575193:role/staging-web-app-execution-role",
+                "arn:aws:iam::617692575193:role/web-app-ECSTaskExecutionRole-*"
             ]
         },
         {
