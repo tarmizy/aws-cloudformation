@@ -557,6 +557,217 @@ aws ecs describe-tasks \
   --tasks $TASK_ID
 ```
 
+## Task Definition dan GitHub Actions Setup
+
+### Task Definition Detail
+```json
+{
+  "family": "web-app-staging",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::617692575193:role/staging-web-app-execution-role",
+  "taskRoleArn": "arn:aws:iam::617692575193:role/staging-web-app-execution-role",
+  "containerDefinitions": [
+    {
+      "name": "web-app",
+      "image": "<ECR_IMAGE>",
+      "portMappings": [
+        {
+          "containerPort": 80,
+          "hostPort": 80,
+          "protocol": "tcp"
+        }
+      ],
+      "essential": true,
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/web-app-staging",
+          "awslogs-region": "ap-southeast-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
+```
+
+### Verifikasi Task Definition
+```bash
+# 1. Verifikasi task definition terdaftar
+aws ecs list-task-definitions \
+  --family-prefix web-app-staging \
+  --sort DESC \
+  --max-items 1
+
+# 2. Lihat detail task definition
+aws ecs describe-task-definition \
+  --task-definition web-app-staging \
+  --query 'taskDefinition'
+
+# 3. Verifikasi execution role
+aws iam get-role \
+  --role-name staging-web-app-execution-role \
+  --query 'Role.{Arn:Arn,AssumeRolePolicyDocument:AssumeRolePolicyDocument}'
+
+# 4. Cek role permissions
+aws iam list-role-policies \
+  --role-name staging-web-app-execution-role
+
+aws iam list-attached-role-policies \
+  --role-name staging-web-app-execution-role
+```
+
+### GitHub Actions Workflow Verification
+```bash
+# 1. Verifikasi GitHub OIDC provider
+aws iam list-open-id-connect-providers
+
+# 2. Cek GitHub Actions role
+aws iam get-role \
+  --role-name github-actions-role \
+  --query 'Role.{Arn:Arn,AssumeRolePolicyDocument:AssumeRolePolicyDocument}'
+
+# 3. Verifikasi role permissions
+aws iam list-role-policies \
+  --role-name github-actions-role
+
+# 4. Cek ECR repository
+aws ecr describe-repositories \
+  --repository-names web-app
+
+# 5. Verifikasi ECR permissions
+aws ecr get-repository-policy \
+  --repository-name web-app
+```
+
+### Common Issues dan Solusi
+
+1. **ClusterNotFoundException**
+```bash
+# Cek cluster yang ada
+aws ecs list-clusters
+
+# Verifikasi cluster status
+aws ecs describe-clusters \
+  --clusters web-app-staging-cluster
+
+# Jika cluster tidak ada, deploy ulang CloudFormation stack
+aws cloudformation deploy \
+  --template-file template.yml \
+  --stack-name web-app \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides Environment=staging
+```
+
+2. **Task Definition Registration Failed**
+```bash
+# Cek execution role
+aws iam get-role \
+  --role-name staging-web-app-execution-role
+
+# Update role jika perlu
+aws iam update-assume-role-policy \
+  --role-name staging-web-app-execution-role \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "Service": "ecs-tasks.amazonaws.com"
+        },
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  }'
+
+# Attach necessary policies
+aws iam attach-role-policy \
+  --role-name staging-web-app-execution-role \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+```
+
+3. **Service Update Failed**
+```bash
+# Cek service status
+aws ecs describe-services \
+  --cluster web-app-staging-cluster \
+  --services web-app-staging
+
+# Verifikasi network configuration
+aws ecs describe-services \
+  --cluster web-app-staging-cluster \
+  --services web-app-staging \
+  --query 'services[0].networkConfiguration'
+
+# Update service dengan konfigurasi yang benar
+aws ecs update-service \
+  --cluster web-app-staging-cluster \
+  --service web-app-staging \
+  --task-definition web-app-staging \
+  --network-configuration "awsvpcConfiguration={subnets=[subnet-xxxxx,subnet-yyyyy],securityGroups=[sg-zzzzz],assignPublicIp=ENABLED}"
+```
+
+4. **GitHub Actions Authentication Failed**
+```bash
+# Verifikasi OIDC provider
+aws iam list-open-id-connect-providers
+
+# Cek role trust relationship
+aws iam get-role \
+  --role-name github-actions-role \
+  --query 'Role.AssumeRolePolicyDocument'
+
+# Update trust relationship jika perlu
+aws iam update-assume-role-policy \
+  --role-name github-actions-role \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "Federated": "arn:aws:iam::617692575193:oidc-provider/token.actions.githubusercontent.com"
+        },
+        "Action": "sts:AssumeRoleWithWebIdentity",
+        "Condition": {
+          "StringEquals": {
+            "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+          },
+          "StringLike": {
+            "token.actions.githubusercontent.com:sub": "repo:tarmizy/aws-cloudformation:*"
+          }
+        }
+      }
+    ]
+  }'
+```
+
+### Deployment Checklist
+
+1. **Pre-deployment**
+- [ ] IAM roles dan policies terkonfigurasi dengan benar
+- [ ] CloudFormation stack dalam status CREATE_COMPLETE
+- [ ] ECS cluster aktif
+- [ ] ECR repository tersedia
+- [ ] GitHub Actions secrets terkonfigurasi
+
+2. **Deployment Process**
+- [ ] GitHub Actions workflow triggered
+- [ ] Docker build berhasil
+- [ ] Image push ke ECR sukses
+- [ ] Task definition terdaftar
+- [ ] Service update berhasil
+
+3. **Post-deployment**
+- [ ] New task running
+- [ ] Health check passing
+- [ ] Application accessible
+- [ ] Logs menunjukkan operasi normal
+
 ## Ringkasan Simulasi Deployment
 
 ### 1. Setup Awal
@@ -620,4 +831,3 @@ aws ecr batch-delete-image \
     --repository-name web-app \
     --query 'imageIds[*]' \
     --output json)"
-```
