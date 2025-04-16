@@ -135,6 +135,7 @@ aws ecs update-service \
 
 ### 3. Monitor Deployment
 
+
 ```bash
 # Monitor service events
 aws ecs describe-services \
