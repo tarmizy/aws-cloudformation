@@ -82,19 +82,72 @@ jobs:
               runtimePlatform: runtimePlatform
             }' \
             --output json)
+
+          # Get existing execution role ARN
+          EXECUTION_ROLE_ARN=$(echo $TASK_DEF | jq -r '.executionRoleArn')
         else
-          # Create new task definition from scratch
-          TASK_ROLE_ARN=$(aws iam get-role --role-name github-actions-role --query 'Role.Arn' --output text)
-          echo "Task Role ARN: $TASK_ROLE_ARN"
+          # Get execution role ARN
+          EXECUTION_ROLE_ARN=$(aws iam get-role --role-name staging-web-app-execution-role --query 'Role.Arn' --output text)
+        fi
+
+        # Get or create task role
+        if ! aws iam get-role --role-name staging-web-app-task-role >/dev/null 2>&1; then
+          echo "Creating task role..."
           
+          # Create task role
+          aws iam create-role \
+            --role-name staging-web-app-task-role \
+            --assume-role-policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": {
+                    "Service": "ecs-tasks.amazonaws.com"
+                  },
+                  "Action": "sts:AssumeRole"
+                }
+              ]
+            }'
+
+          # Attach minimal permissions (adjust as needed)
+          aws iam put-role-policy \
+            --role-name staging-web-app-task-role \
+            --policy-name staging-web-app-task-policy \
+            --policy-document '{
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }'
+        fi
+
+        # Get task role ARN
+        TASK_ROLE_ARN=$(aws iam get-role --role-name staging-web-app-task-role --query 'Role.Arn' --output text)
+        echo "Task Role ARN: $TASK_ROLE_ARN"
+        echo "Execution Role ARN: $EXECUTION_ROLE_ARN"
+
+        # Create new task definition if it doesn't exist
+        if [ -z "$TASK_DEF" ]; then
           TASK_DEF='{
-            "family": "web-app-staging",
+            "family": "staging-web-app",
             "networkMode": "awsvpc",
             "requiresCompatibilities": ["FARGATE"],
-            "cpu": "256",
-            "memory": "512",
+            "cpu": "512",
+            "memory": "1024",
+            "runtimePlatform": {
+              "cpuArchitecture": "ARM64",
+              "operatingSystemFamily": "LINUX"
+            },
             "taskRoleArn": "'$TASK_ROLE_ARN'",
-            "executionRoleArn": "'$TASK_ROLE_ARN'",
+            "executionRoleArn": "'$EXECUTION_ROLE_ARN'",
             "containerDefinitions": [
               {
                 "name": "web-app",
@@ -102,19 +155,31 @@ jobs:
                 "portMappings": [
                   {
                     "containerPort": 80,
+                    "hostPort": 80,
                     "protocol": "tcp"
                   }
                 ],
-                "essential": true
+                "essential": true,
+                "logConfiguration": {
+                  "logDriver": "awslogs",
+                  "options": {
+                    "awslogs-group": "/ecs/staging-web-app",
+                    "awslogs-region": "ap-southeast-1",
+                    "awslogs-stream-prefix": "ecs"
+                  }
+                }
               }
             ]
           }'
         fi
 
-        # If using existing task definition, update the image
+        # If using existing task definition, update the image and roles
         if [[ -n $(echo "$TASK_DEF" | jq -r '.containerDefinitions') ]]; then
-          NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "${{ steps.build-image.outputs.image }}" \
-            '.containerDefinitions[0].image = $IMAGE')
+          NEW_TASK_DEF=$(echo $TASK_DEF | \
+            jq --arg IMAGE "${{ steps.build-image.outputs.image }}" \
+               --arg TASK_ROLE "$TASK_ROLE_ARN" \
+               --arg EXEC_ROLE "$EXECUTION_ROLE_ARN" \
+            '.containerDefinitions[0].image = $IMAGE | .taskRoleArn = $TASK_ROLE | .executionRoleArn = $EXEC_ROLE')
         else
           NEW_TASK_DEF="$TASK_DEF"
         fi
