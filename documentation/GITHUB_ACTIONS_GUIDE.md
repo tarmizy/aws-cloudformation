@@ -195,31 +195,7 @@ Key permissions:
 1. **IAM Role**
    - Role name: `github-actions-role`
    - Trust relationship dengan GitHub OIDC provider
-   - Permissions untuk ECR, ECS, dan CloudFormation
-
-2. **GitHub Repository Secrets**
-   - `AWS_ROLE_ARN`: ARN dari IAM role untuk GitHub Actions
-
-### Workflow Configuration
-
-The workflow (`deploy.yml`) handles:
-1. Building and pushing Docker image to ECR
-2. Creating/updating ECS task definition
-3. Updating ECS service
-4. Monitoring deployment status
-
-### Common Issues
-
-1. **Task Definition Error**
-   ```
-   Parameter validation failed:
-   Invalid type for parameter taskRoleArn, value: None
-   ```
-   
-   **Solution:**
-   - Pastikan GitHub Actions role sudah dibuat dengan benar
-   - Verifikasi `AWS_ROLE_ARN` secret di repository settings
-   - Role harus memiliki permissions yang cukup:
+   - Required permissions:
      ```json
      {
          "Version": "2012-10-17",
@@ -249,27 +225,44 @@ The workflow (`deploy.yml`) handles:
      }
      ```
 
-2. **Task Definition Not Found**
-   ```
-   An error occurred (ClientException) when calling the DescribeTaskDefinition operation
-   ```
-   
-   **Solution:**
-   - Workflow akan membuat task definition baru jika belum ada
-   - Pastikan role memiliki permission `ecs:RegisterTaskDefinition`
-   - Verifikasi family name task definition sesuai dengan yang digunakan di workflow
+2. **ECS Roles**
+   - Execution Role: `staging-web-app-execution-role`
+     - Used for both task execution and task role
+     - Must have permissions for:
+       - Pulling ECR images
+       - Writing CloudWatch logs
+       - Any other permissions needed by the container
 
-3. **Service Update Failed**
+3. **GitHub Repository Secrets**
+   - `AWS_ROLE_ARN`: ARN dari IAM role untuk GitHub Actions
+
+### Common Issues
+
+1. **IAM PassRole Error**
    ```
-   An error occurred (ServiceNotFoundException) when calling the UpdateService operation
+   User is not authorized to perform: iam:PassRole
    ```
    
    **Solution:**
-   - Pastikan nama cluster dan service sesuai
-   - Periksa dengan command:
+   - Pastikan GitHub Actions role memiliki permission `iam:PassRole`
+   - Verifikasi policy sudah diupdate dengan command:
      ```bash
-     aws ecs list-clusters
-     aws ecs list-services --cluster CLUSTER_NAME
+     aws iam get-role-policy \
+       --role-name github-actions-role \
+       --policy-name github-actions-policy
+     ```
+
+2. **Task Role Error**
+   ```
+   Invalid type for parameter taskRoleArn
+   ```
+   
+   **Solution:**
+   - Pastikan execution role sudah dibuat dan valid
+   - Verifikasi role ARN dengan command:
+     ```bash
+     aws iam get-role \
+       --role-name staging-web-app-execution-role
      ```
 
 ### Troubleshooting Steps
