@@ -87,31 +87,28 @@ jobs:
           TASK_ROLE_ARN=$(aws iam get-role --role-name github-actions-role --query 'Role.Arn' --output text)
           echo "Task Role ARN: $TASK_ROLE_ARN"
           
-          TASK_DEF=$(cat <<EOF
-{
-    "family": "web-app-staging",
-    "networkMode": "awsvpc",
-    "requiresCompatibilities": ["FARGATE"],
-    "cpu": "256",
-    "memory": "512",
-    "taskRoleArn": "$TASK_ROLE_ARN",
-    "executionRoleArn": "$TASK_ROLE_ARN",
-    "containerDefinitions": [
-        {
-            "name": "web-app",
-            "image": "${{ steps.build-image.outputs.image }}",
-            "portMappings": [
-                {
+          TASK_DEF='{
+            "family": "web-app-staging",
+            "networkMode": "awsvpc",
+            "requiresCompatibilities": ["FARGATE"],
+            "cpu": "256",
+            "memory": "512",
+            "taskRoleArn": "'$TASK_ROLE_ARN'",
+            "executionRoleArn": "'$TASK_ROLE_ARN'",
+            "containerDefinitions": [
+              {
+                "name": "web-app",
+                "image": "${{ steps.build-image.outputs.image }}",
+                "portMappings": [
+                  {
                     "containerPort": 80,
                     "protocol": "tcp"
-                }
-            ],
-            "essential": true
-        }
-    ]
-}
-EOF
-)
+                  }
+                ],
+                "essential": true
+              }
+            ]
+          }'
         fi
 
         # If using existing task definition, update the image
