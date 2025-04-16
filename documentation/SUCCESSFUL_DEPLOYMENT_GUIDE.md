@@ -113,28 +113,20 @@ aws cloudformation describe-stack-events \
   --region ap-southeast-1
 ```
 
-### 5. Verifikasi Stack dan ECS Service
+### 5. Update ECS Service
 
 ```bash
-# 1. Cek status stack
-aws cloudformation describe-stacks \
-  --stack-name web-app \
-  --query 'Stacks[0].StackStatus' \
-  --region ap-southeast-1
-
-# Expected output: "CREATE_COMPLETE"
-
-# 2. List ECS clusters
+# 1. Cek nama cluster yang tersedia
 aws ecs list-clusters --region ap-southeast-1
 
 # Expected output:
 # {
 #     "clusterArns": [
-#         "arn:aws:ecs:ap-southeast-1:617692575193:cluster/staging-web-app-cluster"
+#         "arn:aws:ecs:ap-southeast-1:YOUR_ACCOUNT_ID:cluster/staging-web-app-cluster"
 #     ]
 # }
 
-# 3. List services in cluster
+# 2. Cek services yang ada di cluster
 aws ecs list-services \
   --cluster staging-web-app-cluster \
   --region ap-southeast-1
@@ -142,166 +134,53 @@ aws ecs list-services \
 # Expected output:
 # {
 #     "serviceArns": [
-#         "arn:aws:ecs:ap-southeast-1:617692575193:service/staging-web-app-cluster/staging-web-app"
+#         "arn:aws:ecs:ap-southeast-1:YOUR_ACCOUNT_ID:service/staging-web-app-cluster/staging-web-app"
 #     ]
 # }
 
-# 4. Cek service status
+# 3. Update service dengan task definition baru
+aws ecs update-service \
+  --cluster staging-web-app-cluster \
+  --service staging-web-app \
+  --task-definition web-app-staging \
+  --region ap-southeast-1
+
+# 4. Monitor status deployment
 aws ecs describe-services \
   --cluster staging-web-app-cluster \
   --services staging-web-app \
-  --region ap-southeast-1 \
-  --query 'services[0].{status:status,runningCount:runningCount,desiredCount:desiredCount,events:events[0:3]}'
+  --region ap-southeast-1
 
-# Expected output:
-# {
-#     "status": "ACTIVE",
-#     "runningCount": 2,
-#     "desiredCount": 2,
-#     "events": [
-#         {
-#             "message": "(service staging-web-app) has reached a steady state."
-#         },
-#         {
-#             "message": "(service staging-web-app) deployment completed."
-#         }
-#     ]
-# }
+# Cek status di bagian deployments[].rolloutState:
+# - "IN_PROGRESS": Deployment sedang berjalan
+# - "COMPLETED": Deployment berhasil
+# - "FAILED": Deployment gagal
 
-# 5. Get dan test service URL
-SERVICE_URL=$(aws cloudformation describe-stacks \
-  --stack-name web-app \
-  --query 'Stacks[0].Outputs[?OutputKey==`ServiceURL`].OutputValue' \
-  --output text \
-  --region ap-southeast-1)
-
-echo "Service URL: $SERVICE_URL"
-curl -v $SERVICE_URL
+# Jika deployment gagal, cek events[] untuk detail error
 ```
 
-### 6. Create and Configure GitHub Actions Role
+### Common Issues
 
-# First, check if role exists
-aws iam get-role --role-name github-actions-role || echo "Role does not exist"
+1. **Cluster Not Found**
+   - Error: `ClusterNotFoundException`
+   - Solution: Gunakan `aws ecs list-clusters` untuk mendapatkan nama cluster yang benar
 
-# If role doesn't exist, create trust policy and role
-echo '{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Principal": {
-                "Federated": "arn:aws:iam::617692575193:oidc-provider/token.actions.githubusercontent.com"
-            },
-            "Action": "sts:AssumeRoleWithWebIdentity",
-            "Condition": {
-                "StringEquals": {
-                    "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
-                },
-                "StringLike": {
-                    "token.actions.githubusercontent.com:sub": "repo:YOUR_GITHUB_USERNAME/aws-cloudformation:*"
-                }
-            }
-        }
-    ]
-}' > github-actions-trust-policy.json
+2. **Service Not Found**
+   - Error: `ServiceNotFoundException`
+   - Solution: Gunakan `aws ecs list-services --cluster CLUSTER_NAME` untuk mendapatkan nama service yang benar
 
-aws iam create-role \
-  --role-name github-actions-role \
-  --assume-role-policy-document file://github-actions-trust-policy.json
+3. **Task Definition Error**
+   - Error: `Invalid type for parameter taskRoleArn`
+   - Solution: 
+     - Pastikan task definition memiliki `taskRoleArn` yang valid
+     - Lihat [TASK_DEFINITION_GUIDE.md](./TASK_DEFINITION_GUIDE.md) untuk detail konfigurasi
 
-# Create and attach policy
-echo '{
-    "Version": "2012-10-17",
-    "Statement": [
-        {
-            "Effect": "Allow",
-            "Action": [
-                "ecr:GetAuthorizationToken",
-                "ecr:BatchCheckLayerAvailability",
-                "ecr:GetDownloadUrlForLayer",
-                "ecr:BatchGetImage",
-                "ecr:PutImage",
-                "ecr:InitiateLayerUpload",
-                "ecr:UploadLayerPart",
-                "ecr:CompleteLayerUpload",
-                "ecs:DescribeServices",
-                "ecs:UpdateService",
-                "cloudformation:*"
-            ],
-            "Resource": "*"
-        }
-    ]
-}' > github-actions-policy.json
+4. **Deployment Stuck**
+   - Cek status dengan `describe-services`
+   - Review events[] untuk melihat detail error
+   - Pastikan task dapat mengakses ECR dan memiliki permission yang cukup
 
-# Attach policy to role
-aws iam put-role-policy \
-  --role-name github-actions-role \
-  --policy-name github-actions-policy \
-  --policy-document file://github-actions-policy.json
-
-# Verify policy attachment
-aws iam get-role-policy \
-  --role-name github-actions-role \
-  --policy-name github-actions-policy
-
-# Expected output:
-# {
-#     "RoleName": "github-actions-role",
-#     "PolicyName": "github-actions-policy",
-#     "PolicyDocument": {
-#         "Version": "2012-10-17",
-#         "Statement": [
-#             {
-#                 "Effect": "Allow",
-#                 "Action": [
-#                     "ecr:GetAuthorizationToken",
-#                     ...
-#                     "cloudformation:*"
-#                 ],
-#                 "Resource": "*"
-#             }
-#         ]
-#     }
-# }
-
-# 7. Get role ARN untuk GitHub Secret
-ROLE_ARN=$(aws iam get-role \
-  --role-name github-actions-role \
-  --query 'Role.Arn' \
-  --output text)
-
-echo "GitHub Actions Role ARN: $ROLE_ARN"
-# Expected output:
-# GitHub Actions Role ARN: arn:aws:iam::617692575193:role/github-actions-role
-
-### 7. Setup GitHub Repository Secrets
-
-1. Go to repository Settings > Secrets and variables > Actions
-2. Add new repository secret:
-   - Name: `AWS_ROLE_ARN`
-   - Value: Output dari `$ROLE_ARN` di langkah sebelumnya
-
-### 8. Trigger Deployment
-
-1. Update aplikasi (contoh: index.html):
-```html
-<h1 class="fw-bolder">Hello World To The Test</h1>
-```
-
-2. Commit dan push perubahan:
-```bash
-git add .
-git commit -m "Update content"
-git push origin main
-```
-
-3. Monitor deployment:
-   - Buka GitHub repository
-   - Klik tab "Actions"
-   - Lihat workflow run terbaru
-
-### 9. Verifikasi Deployment
+### 6. Verifikasi Deployment
 
 ```bash
 # Get service URL
@@ -412,3 +291,44 @@ aws logs get-log-events \
   --log-group-name /ecs/staging-web-app \
   --log-stream-name <log-stream-name> \
   --region ap-southeast-1
+
+```
+
+### 7. Setup GitHub Repository Secrets
+
+1. Go to repository Settings > Secrets and variables > Actions
+2. Add new repository secret:
+   - Name: `AWS_ROLE_ARN`
+   - Value: Output dari `$ROLE_ARN` di langkah sebelumnya
+
+### 8. Trigger Deployment
+
+1. Update aplikasi (contoh: index.html):
+```html
+<h1 class="fw-bolder">Hello World To The Test</h1>
+```
+
+2. Commit dan push perubahan:
+```bash
+git add .
+git commit -m "Update content"
+git push origin main
+```
+
+3. Monitor deployment:
+   - Buka GitHub repository
+   - Klik tab "Actions"
+   - Lihat workflow run terbaru
+
+### 9. Verifikasi Deployment
+
+```bash
+# Get service URL
+SERVICE_URL=$(aws cloudformation describe-stacks \
+  --stack-name $STACK_NAME \
+  --query 'Stacks[0].Outputs[?OutputKey==`ServiceURL`].OutputValue' \
+  --output text)
+
+# Test endpoint
+curl -v $SERVICE_URL
+```

@@ -183,6 +183,125 @@ aws ecs describe-services \
 - Adjust resource allocation
 - Check for memory leaks
 
+## Task Definition Guide
+
+### Required Parameters
+
+When creating a task definition for Fargate, make sure to include these required parameters:
+
+1. **Task Role ARN** (`taskRoleArn`):
+   - Role yang akan digunakan oleh container
+   - Harus berupa string ARN yang valid
+   - Contoh: `arn:aws:iam::617692575193:role/github-actions-role`
+
+2. **Execution Role ARN** (`executionRoleArn`):
+   - Role yang digunakan ECS untuk menjalankan task
+   - Biasanya sama dengan Task Role ARN
+   - Contoh: `arn:aws:iam::617692575193:role/github-actions-role`
+
+### Task Definition Template
+
+```json
+{
+    "family": "web-app-staging",
+    "networkMode": "awsvpc",
+    "requiresCompatibilities": ["FARGATE"],
+    "cpu": "256",
+    "memory": "512",
+    "taskRoleArn": "arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_ROLE_NAME",
+    "executionRoleArn": "arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_ROLE_NAME",
+    "containerDefinitions": [
+        {
+            "name": "web-app",
+            "image": "YOUR_ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/web-app:latest",
+            "portMappings": [
+                {
+                    "containerPort": 80,
+                    "protocol": "tcp"
+                }
+            ],
+            "essential": true
+        }
+    ]
+}
+```
+
+### Registering Task Definition
+
+```bash
+# 1. Get Task Role ARN
+TASK_ROLE_ARN=$(aws iam get-role --role-name github-actions-role --query 'Role.Arn' --output text --region REGION)
+echo "Task Role ARN: $TASK_ROLE_ARN"
+
+# 2. Create task definition JSON
+cat > task-definition.json << EOF
+{
+    "family": "web-app-staging",
+    "networkMode": "awsvpc",
+    "requiresCompatibilities": ["FARGATE"],
+    "cpu": "256",
+    "memory": "512",
+    "taskRoleArn": "$TASK_ROLE_ARN",
+    "executionRoleArn": "$TASK_ROLE_ARN",
+    "containerDefinitions": [
+        {
+            "name": "web-app",
+            "image": "YOUR_ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/web-app:latest",
+            "portMappings": [
+                {
+                    "containerPort": 80,
+                    "protocol": "tcp"
+                }
+            ],
+            "essential": true
+        }
+    ]
+}
+EOF
+
+# 3. Register task definition
+aws ecs register-task-definition \
+  --cli-input-json file://task-definition.json \
+  --region REGION
+
+# 4. Verify registration
+aws ecs describe-task-definition \
+  --task-definition web-app-staging \
+  --region REGION
+```
+
+### Common Issues
+
+1. **Invalid taskRoleArn**
+   - Error: `Parameter validation failed: Invalid type for parameter taskRoleArn, value: None`
+   - Solution: Pastikan `taskRoleArn` terisi dengan ARN yang valid
+   - Command untuk mendapatkan ARN:
+     ```bash
+     aws iam get-role --role-name ROLE_NAME --query 'Role.Arn' --output text --region REGION
+     ```
+
+2. **Invalid executionRoleArn**
+   - Error: `Parameter validation failed: Invalid type for parameter executionRoleArn`
+   - Solution: Pastikan `executionRoleArn` terisi dengan ARN yang valid
+   - Biasanya menggunakan ARN yang sama dengan `taskRoleArn`
+
+### Troubleshooting
+
+1. **Cek Role ARN**
+   ```bash
+   aws iam get-role --role-name github-actions-role --region REGION
+   ```
+
+2. **Cek Role Permissions**
+   ```bash
+   aws iam get-role-policy --role-name github-actions-role --policy-name github-actions-policy --region REGION
+   ```
+
+3. **Cek Task Definition**
+   ```bash
+   aws ecs describe-task-definition --task-definition web-app-staging --region REGION
+   ```
+
 ## Related Documentation
 
 - [GITHUB_ACTIONS_GUIDE.md](./GITHUB_ACTIONS_GUIDE.md) - GitHub Actions workflow

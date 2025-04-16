@@ -1,34 +1,22 @@
 {
-    "family": "staging-web-app",
+    "family": "web-app-staging",
     "networkMode": "awsvpc",
     "requiresCompatibilities": ["FARGATE"],
     "cpu": "256",
     "memory": "512",
-    "runtimePlatform": {
-        "cpuArchitecture": "X86_64",
-        "operatingSystemFamily": "LINUX"
-    },
-    "taskRoleArn": "arn:aws:iam::617692575193:role/ecsTaskRole",
-    "executionRoleArn": "arn:aws:iam::617692575193:role/ecsTaskExecutionRole",
+    "taskRoleArn": "arn:aws:iam::617692575193:role/github-actions-role",
+    "executionRoleArn": "arn:aws:iam::617692575193:role/github-actions-role",
     "containerDefinitions": [
         {
             "name": "web-app",
-            "image": "617692575193.dkr.ecr.ap-southeast-1.amazonaws.com/web-app:staging",
-            "essential": true,
+            "image": "617692575193.dkr.ecr.ap-southeast-1.amazonaws.com/web-app:latest",
             "portMappings": [
                 {
                     "containerPort": 80,
                     "protocol": "tcp"
                 }
             ],
-            "logConfiguration": {
-                "logDriver": "awslogs",
-                "options": {
-                    "awslogs-group": "/ecs/staging-web-app",
-                    "awslogs-region": "ap-southeast-1",
-                    "awslogs-stream-prefix": "ecs"
-                }
-            }
+            "essential": true
         }
     ]
 }
