@@ -289,9 +289,7 @@ aws logs describe-log-streams \
 # Get specific log events
 aws logs get-log-events \
   --log-group-name /ecs/staging-web-app \
-  --log-stream-name <log-stream-name> \
-  --region ap-southeast-1
-
+  --log-stream-name TASK_ID
 ```
 
 ### 7. Setup GitHub Repository Secrets
@@ -331,4 +329,166 @@ SERVICE_URL=$(aws cloudformation describe-stacks \
 
 # Test endpoint
 curl -v $SERVICE_URL
+```
+
+## Deployment Process
+
+### 1. Infrastructure Deployment (CloudFormation)
+
+#### Stack Creation
+```bash
+# Deploy infrastructure
+aws cloudformation create-stack \
+  --stack-name web-app \
+  --template-body file://template.yml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameters ParameterKey=Environment,ParameterValue=staging
+```
+
+#### Monitor Deployment Progress
+```bash
+# Check stack status
+aws cloudformation describe-stacks \
+  --stack-name web-app \
+  --query 'Stacks[0].StackStatus'
+
+# View recent events
+aws cloudformation describe-stack-events \
+  --stack-name web-app \
+  --query 'StackEvents[0:5]'
+```
+
+#### Verify Resources
+After successful deployment, verify:
+1. VPC and networking components
+2. Security groups
+3. Load balancer and target group
+4. ECS cluster and service
+5. CloudWatch log group
+
+### 2. Application Deployment (GitHub Actions)
+
+#### Prerequisites
+1. GitHub repository configured with:
+   - AWS role ARN in secrets
+   - Workflow file in place
+   - Dockerfile and application code
+
+#### Monitor Deployment
+1. GitHub Actions:
+   - Check workflow runs in Actions tab
+   - Monitor build and push steps
+   - Verify ECR image upload
+
+2. ECS Service:
+```bash
+# Check service status
+aws ecs describe-services \
+  --cluster staging-web-app-cluster \
+  --services staging-web-app
+
+# View running tasks
+aws ecs list-tasks \
+  --cluster staging-web-app-cluster \
+  --service-name staging-web-app
+
+# Check container logs
+aws logs get-log-events \
+  --log-group-name /ecs/staging-web-app \
+  --log-stream-name TASK_ID
+```
+
+3. Load Balancer:
+```bash
+# Get service URL
+aws cloudformation describe-stacks \
+  --stack-name web-app \
+  --query 'Stacks[0].Outputs[?OutputKey==`ServiceURL`].OutputValue' \
+  --output text
+```
+
+## Verification Checklist
+
+### Infrastructure
+- [ ] VPC and subnets created
+- [ ] Security groups configured
+- [ ] Load balancer accessible
+- [ ] Target group healthy
+- [ ] ECS cluster running
+- [ ] Service stable
+
+### Application
+- [ ] Container image built and pushed
+- [ ] Tasks running
+- [ ] Health checks passing
+- [ ] Logs showing normal operation
+- [ ] Application accessible via ALB
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Task Definition**
+   - Check execution role permissions
+   - Verify container configuration
+   - Validate memory and CPU settings
+
+2. **Service Deployment**
+   - Monitor service events
+   - Check task placement
+   - Verify network configuration
+
+3. **Application Health**
+   - Review container logs
+   - Check target group health
+   - Verify security group rules
+
+### Resolution Steps
+
+1. **Task Won't Start**
+```bash
+# Check service events
+aws ecs describe-services \
+  --cluster staging-web-app-cluster \
+  --services staging-web-app \
+  --query 'services[0].events'
+
+# View stopped tasks
+aws ecs describe-tasks \
+  --cluster staging-web-app-cluster \
+  --tasks TASK_ID
+```
+
+2. **Health Check Failures**
+```bash
+# View target health
+aws elbv2 describe-target-health \
+  --target-group-arn TARGET_GROUP_ARN
+
+# Check container logs
+aws logs get-log-events \
+  --log-group-name /ecs/staging-web-app \
+  --log-stream-name TASK_ID
+```
+
+## Rollback Procedure
+
+### Infrastructure Rollback
+```bash
+# Revert to previous stack version
+aws cloudformation update-stack \
+  --stack-name web-app \
+  --template-body file://previous-template.yml \
+  --capabilities CAPABILITY_NAMED_IAM
+```
+
+### Application Rollback
+1. Update task definition to previous version
+2. Update service to use previous task definition
+```bash
+aws ecs update-service \
+  --cluster staging-web-app-cluster \
+  --service staging-web-app \
+  --task-definition PREVIOUS_TASK_DEF \
+  --force-new-deployment
 ```

@@ -1,8 +1,188 @@
 # CloudFormation Template Guide
 
 ## Overview
+This guide explains the CloudFormation template used to deploy the web application infrastructure.
 
-Template CloudFormation ini mendefinisikan infrastruktur AWS untuk menjalankan aplikasi web di ECS Fargate dengan load balancer.
+## Template Structure
+
+### Parameters
+- `Environment`: Staging or production environment (default: staging)
+- `ContainerPort`: Port exposed by the container (default: 80)
+- `HealthCheckPath`: Health check path for ALB target group (default: /)
+
+### Resources
+
+#### Networking
+1. **VPC**
+   - CIDR: 10.0.0.0/16
+   - DNS hostnames enabled
+   - DNS support enabled
+
+2. **Subnets**
+   - 2 public subnets in different AZs
+   - Public Subnet 1: 10.0.1.0/24
+   - Public Subnet 2: 10.0.2.0/24
+
+3. **Internet Gateway**
+   - Attached to VPC
+   - Public route table with default route
+
+#### Security Groups
+1. **ALB Security Group**
+   - Inbound: Port 80 from anywhere (0.0.0.0/0)
+
+2. **ECS Security Group**
+   - Inbound: Container port from ALB security group only
+
+#### Load Balancer
+1. **Application Load Balancer**
+   - Public subnets
+   - HTTP listener on port 80
+
+2. **Target Group**
+   - Target type: IP
+   - Protocol: HTTP
+   - Health check configuration:
+     - Interval: 30 seconds
+     - Timeout: 5 seconds
+     - Healthy threshold: 2
+     - Unhealthy threshold: 3
+
+#### ECS Resources
+1. **ECS Cluster**
+   - Name format: {stack-name}-{environment}-cluster
+
+2. **ECS Service**
+   - Launch type: FARGATE
+   - Desired count: 1
+   - Network configuration:
+     - Public IP enabled
+     - Security group and subnets configured
+
+3. **Task Definition**
+   - CPU: 512 (0.5 vCPU)
+   - Memory: 1024 MB (1 GB)
+   - Network mode: awsvpc
+   - Platform: FARGATE
+   - Container configuration:
+     - Port mappings
+     - CloudWatch logs
+     - Uses execution and task roles
+
+#### Logging
+- CloudWatch Log Group
+  - Name format: /ecs/{stack-name}-{environment}
+  - Retention: 30 days
+
+### Outputs
+1. `ServiceURL`: URL of the application load balancer
+2. `ClusterName`: Name of the ECS cluster
+3. `ServiceName`: Name of the ECS service
+
+## Usage
+
+### Deploy Stack
+```bash
+# Create new stack
+aws cloudformation create-stack \
+  --stack-name web-app \
+  --template-body file://template.yml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameters ParameterKey=Environment,ParameterValue=staging
+
+# Wait for completion
+aws cloudformation wait stack-create-complete --stack-name web-app
+
+# Get outputs
+aws cloudformation describe-stacks \
+  --stack-name web-app \
+  --query 'Stacks[0].Outputs' \
+  --output table
+```
+
+### Update Stack
+```bash
+# Update existing stack
+aws cloudformation update-stack \
+  --stack-name web-app \
+  --template-body file://template.yml \
+  --capabilities CAPABILITY_NAMED_IAM
+
+# Wait for completion
+aws cloudformation wait stack-update-complete --stack-name web-app
+```
+
+### Delete Stack
+```bash
+# Delete stack
+aws cloudformation delete-stack --stack-name web-app
+
+# Wait for completion
+aws cloudformation wait stack-delete-complete --stack-name web-app
+```
+
+## Monitoring
+
+### Check Stack Status
+```bash
+aws cloudformation describe-stacks \
+  --stack-name web-app \
+  --query 'Stacks[0].StackStatus'
+```
+
+### View Stack Events
+```bash
+aws cloudformation describe-stack-events \
+  --stack-name web-app \
+  --query 'StackEvents[*].{Timestamp:Timestamp,Status:ResourceStatus,Type:ResourceType,Reason:ResourceStatusReason}'
+```
+
+### List Stack Resources
+```bash
+aws cloudformation list-stack-resources \
+  --stack-name web-app
+```
+
+## Troubleshooting
+
+### Common Issues
+
+1. **VPC Limits**
+   - Check if you have enough VPC capacity in the region
+   - Verify subnet CIDR ranges don't overlap
+
+2. **IAM Permissions**
+   - Ensure execution role exists and has correct permissions
+   - Verify task role permissions for application needs
+
+3. **ECS Service Issues**
+   - Check target group health check settings
+   - Verify container port and health check path
+   - Check security group rules
+
+### Validation
+```bash
+# Validate template syntax
+aws cloudformation validate-template \
+  --template-body file://template.yml
+```
+
+## Security Considerations
+
+1. **Network Security**
+   - Public subnets only used for ALB
+   - Container access restricted to ALB
+   - No direct internet access to containers
+
+2. **IAM Security**
+   - Least privilege principle applied
+   - Separate execution and task roles
+   - Resource-level permissions where possible
+
+3. **Container Security**
+   - Image scanning enabled
+   - No privileged containers
+   - Resource limits enforced
 
 ## Architecture Diagram
 

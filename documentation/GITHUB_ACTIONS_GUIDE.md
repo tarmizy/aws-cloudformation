@@ -303,6 +303,106 @@ Key permissions:
      --services SERVICE_NAME
    ```
 
+## GitHub Actions Setup Guide
+
+## Required Secrets
+
+### AWS Role ARN
+The GitHub Actions workflow requires the following secret to be configured:
+
+- **AWS_ROLE_ARN**: `arn:aws:iam::617692575193:role/github-actions-role`
+
+### How to Add Secrets
+
+1. Go to your GitHub repository
+2. Click on "Settings" tab
+3. In the left sidebar, click on "Secrets and variables" > "Actions"
+4. Click "New repository secret"
+5. Add the following secret:
+   - Name: `AWS_ROLE_ARN`
+   - Value: `arn:aws:iam::617692575193:role/github-actions-role`
+6. Click "Add secret"
+
+## Workflow Configuration
+
+The workflow is configured to:
+1. Build multi-architecture Docker images (ARM64 and AMD64)
+2. Push images to Amazon ECR
+3. Deploy to Amazon ECS using Fargate
+4. Monitor deployment status
+
+### Workflow Triggers
+The workflow is triggered on:
+- Push to `main` branch
+- Changes to non-documentation files (excludes .md files)
+
+### Environment Variables
+The following environment variables are configured in the workflow:
+- `AWS_REGION`: ap-southeast-1
+- `ECR_REPOSITORY`: web-app
+- `ECS_CLUSTER`: staging-web-app-cluster
+- `ECS_SERVICE`: staging-web-app
+- `STACK_NAME`: web-app
+- `ENVIRONMENT`: staging
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Access Denied**
+   - Verify that the GitHub Actions role ARN is correct
+   - Check IAM role permissions
+   - Ensure OIDC provider is properly configured
+
+2. **Build Failures**
+   - Check Dockerfile syntax
+   - Verify build context
+   - Ensure all required files are present
+
+3. **Deployment Failures**
+   - Check ECS service logs
+   - Verify task definition configuration
+   - Check container health checks
+
+### Useful Commands
+
+1. Check ECS service status:
+```bash
+aws ecs describe-services \
+  --cluster staging-web-app-cluster \
+  --services staging-web-app
+```
+
+2. View container logs:
+```bash
+aws logs get-log-events \
+  --log-group-name /ecs/staging-web-app \
+  --log-stream-name TASK_ID
+```
+
+3. List task definitions:
+```bash
+aws ecs list-task-definitions \
+  --family-prefix staging-web-app
+```
+
+## Security Best Practices
+
+1. **IAM Roles**
+   - Use least privilege principle
+   - Regularly rotate credentials
+   - Monitor role usage
+
+2. **Secrets**
+   - Never commit secrets to the repository
+   - Use GitHub Secrets for sensitive data
+   - Regularly audit secret access
+
+3. **Container Security**
+   - Use multi-stage builds
+   - Scan images for vulnerabilities
+   - Keep base images updated
+
 ## Usage Guide
 
 ### 1. Making Changes
