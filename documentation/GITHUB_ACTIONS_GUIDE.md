@@ -182,6 +182,7 @@ Key permissions:
      --web-identity-token "token" \
      --duration-seconds 900
    ```
+   
 
    ### Notes:
    - Thumbprint `6938fd4d98bab03faadb97b34396831e3780aea1` adalah valid untuk GitHub Actions
