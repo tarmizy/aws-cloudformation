@@ -90,47 +90,8 @@ jobs:
           EXECUTION_ROLE_ARN=$(aws iam get-role --role-name staging-web-app-execution-role --query 'Role.Arn' --output text)
         fi
 
-        # Get or create task role
-        if ! aws iam get-role --role-name staging-web-app-task-role >/dev/null 2>&1; then
-          echo "Creating task role..."
-          
-          # Create task role
-          aws iam create-role \
-            --role-name staging-web-app-task-role \
-            --assume-role-policy-document '{
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Effect": "Allow",
-                  "Principal": {
-                    "Service": "ecs-tasks.amazonaws.com"
-                  },
-                  "Action": "sts:AssumeRole"
-                }
-              ]
-            }'
-
-          # Attach minimal permissions (adjust as needed)
-          aws iam put-role-policy \
-            --role-name staging-web-app-task-role \
-            --policy-name staging-web-app-task-policy \
-            --policy-document '{
-              "Version": "2012-10-17",
-              "Statement": [
-                {
-                  "Effect": "Allow",
-                  "Action": [
-                    "logs:CreateLogStream",
-                    "logs:PutLogEvents"
-                  ],
-                  "Resource": "*"
-                }
-              ]
-            }'
-        fi
-
-        # Get task role ARN
-        TASK_ROLE_ARN=$(aws iam get-role --role-name staging-web-app-task-role --query 'Role.Arn' --output text)
+        # Use execution role as task role since it already has the necessary permissions
+        TASK_ROLE_ARN=$EXECUTION_ROLE_ARN
         echo "Task Role ARN: $TASK_ROLE_ARN"
         echo "Execution Role ARN: $EXECUTION_ROLE_ARN"
 
