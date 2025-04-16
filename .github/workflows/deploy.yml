@@ -65,25 +65,62 @@ jobs:
       run: |
         echo "Creating new task definition using image: ${{ steps.build-image.outputs.image }}"
         
-        # Get current task definition and clean it
-        TASK_DEF=$(aws ecs describe-task-definition \
-          --task-definition staging-web-app \
-          --query 'taskDefinition | {
-            family: family,
-            taskRoleArn: taskRoleArn,
-            executionRoleArn: executionRoleArn,
-            networkMode: networkMode,
-            containerDefinitions: containerDefinitions,
-            requiresCompatibilities: requiresCompatibilities,
-            cpu: cpu,
-            memory: memory,
-            runtimePlatform: runtimePlatform
-          }' \
-          --output json)
+        # Try to get current task definition, if it exists
+        if aws ecs describe-task-definition --task-definition staging-web-app >/dev/null 2>&1; then
+          # Get current task definition and clean it
+          TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition staging-web-app \
+            --query 'taskDefinition | {
+              family: family,
+              taskRoleArn: taskRoleArn,
+              executionRoleArn: executionRoleArn,
+              networkMode: networkMode,
+              containerDefinitions: containerDefinitions,
+              requiresCompatibilities: requiresCompatibilities,
+              cpu: cpu,
+              memory: memory,
+              runtimePlatform: runtimePlatform
+            }' \
+            --output json)
+        else
+          # Create new task definition from scratch
+          TASK_ROLE_ARN=$(aws iam get-role --role-name github-actions-role --query 'Role.Arn' --output text)
+          echo "Task Role ARN: $TASK_ROLE_ARN"
+          
+          TASK_DEF=$(cat <<EOF
+{
+    "family": "web-app-staging",
+    "networkMode": "awsvpc",
+    "requiresCompatibilities": ["FARGATE"],
+    "cpu": "256",
+    "memory": "512",
+    "taskRoleArn": "$TASK_ROLE_ARN",
+    "executionRoleArn": "$TASK_ROLE_ARN",
+    "containerDefinitions": [
+        {
+            "name": "web-app",
+            "image": "${{ steps.build-image.outputs.image }}",
+            "portMappings": [
+                {
+                    "containerPort": 80,
+                    "protocol": "tcp"
+                }
+            ],
+            "essential": true
+        }
+    ]
+}
+EOF
+)
+        fi
 
-        # Update image in task definition
-        NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "${{ steps.build-image.outputs.image }}" \
-          '.containerDefinitions[0].image = $IMAGE')
+        # If using existing task definition, update the image
+        if [[ -n $(echo "$TASK_DEF" | jq -r '.containerDefinitions') ]]; then
+          NEW_TASK_DEF=$(echo $TASK_DEF | jq --arg IMAGE "${{ steps.build-image.outputs.image }}" \
+            '.containerDefinitions[0].image = $IMAGE')
+        else
+          NEW_TASK_DEF="$TASK_DEF"
+        fi
 
         echo "New task definition:"
         echo "$NEW_TASK_DEF" | jq '.'

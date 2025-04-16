@@ -188,6 +188,127 @@ Key permissions:
    - Ganti `your-org/your-repo` dengan nama organisasi dan repository Anda
    - Role ARN akan berbeda sesuai dengan AWS account Anda
 
+## GitHub Actions Guide
+
+### Prerequisites
+
+1. **IAM Role**
+   - Role name: `github-actions-role`
+   - Trust relationship dengan GitHub OIDC provider
+   - Permissions untuk ECR, ECS, dan CloudFormation
+
+2. **GitHub Repository Secrets**
+   - `AWS_ROLE_ARN`: ARN dari IAM role untuk GitHub Actions
+
+### Workflow Configuration
+
+The workflow (`deploy.yml`) handles:
+1. Building and pushing Docker image to ECR
+2. Creating/updating ECS task definition
+3. Updating ECS service
+4. Monitoring deployment status
+
+### Common Issues
+
+1. **Task Definition Error**
+   ```
+   Parameter validation failed:
+   Invalid type for parameter taskRoleArn, value: None
+   ```
+   
+   **Solution:**
+   - Pastikan GitHub Actions role sudah dibuat dengan benar
+   - Verifikasi `AWS_ROLE_ARN` secret di repository settings
+   - Role harus memiliki permissions yang cukup:
+     ```json
+     {
+         "Version": "2012-10-17",
+         "Statement": [
+             {
+                 "Effect": "Allow",
+                 "Action": [
+                     "ecr:GetAuthorizationToken",
+                     "ecr:BatchCheckLayerAvailability",
+                     "ecr:GetDownloadUrlForLayer",
+                     "ecr:BatchGetImage",
+                     "ecr:PutImage",
+                     "ecr:InitiateLayerUpload",
+                     "ecr:UploadLayerPart",
+                     "ecr:CompleteLayerUpload",
+                     "ecs:DescribeServices",
+                     "ecs:UpdateService",
+                     "ecs:RegisterTaskDefinition",
+                     "ecs:DescribeTaskDefinition",
+                     "iam:GetRole",
+                     "iam:PassRole",
+                     "cloudformation:*"
+                 ],
+                 "Resource": "*"
+             }
+         ]
+     }
+     ```
+
+2. **Task Definition Not Found**
+   ```
+   An error occurred (ClientException) when calling the DescribeTaskDefinition operation
+   ```
+   
+   **Solution:**
+   - Workflow akan membuat task definition baru jika belum ada
+   - Pastikan role memiliki permission `ecs:RegisterTaskDefinition`
+   - Verifikasi family name task definition sesuai dengan yang digunakan di workflow
+
+3. **Service Update Failed**
+   ```
+   An error occurred (ServiceNotFoundException) when calling the UpdateService operation
+   ```
+   
+   **Solution:**
+   - Pastikan nama cluster dan service sesuai
+   - Periksa dengan command:
+     ```bash
+     aws ecs list-clusters
+     aws ecs list-services --cluster CLUSTER_NAME
+     ```
+
+### Troubleshooting Steps
+
+1. **Cek GitHub Actions Logs**
+   - Buka repository di GitHub
+   - Klik tab "Actions"
+   - Pilih workflow run yang gagal
+   - Expand step yang error untuk melihat detail
+
+2. **Verifikasi IAM Role**
+   ```bash
+   # Cek role
+   aws iam get-role --role-name github-actions-role
+   
+   # Cek policy
+   aws iam get-role-policy \
+     --role-name github-actions-role \
+     --policy-name github-actions-policy
+   ```
+
+3. **Cek Task Definition**
+   ```bash
+   # List task definitions
+   aws ecs list-task-definitions
+   
+   # Describe specific task definition
+   aws ecs describe-task-definition \
+     --task-definition FAMILY_NAME:REVISION
+   ```
+
+4. **Monitor Deployment**
+   ```bash
+   # Cek service status
+   aws ecs describe-services \
+     --cluster CLUSTER_NAME \
+     --services SERVICE_NAME
+   ```
+
 ## Usage Guide
 
 ### 1. Making Changes
