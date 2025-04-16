@@ -108,13 +108,85 @@ Key permissions:
    ```
 
 3. **Configure OIDC in AWS**
+   ### 1. Create or Update OIDC Provider
+
    ```bash
-   # Create OIDC Provider
+   # Create OIDC Provider (jika belum ada)
    aws iam create-open-id-connect-provider \
      --url https://token.actions.githubusercontent.com \
-     --thumbprint-list "list-of-thumbprints" \
+     --thumbprint-list "6938fd4d98bab03faadb97b34396831e3780aea1" \
      --client-id-list "sts.amazonaws.com"
+
+   # Jika provider sudah ada, dapatkan ARN
+   OIDC_PROVIDER_ARN=$(aws iam list-open-id-connect-providers \
+     --query 'OpenIDConnectProviderList[?contains(Arn, `token.actions.githubusercontent.com`)].Arn' \
+     --output text)
+
+   echo "OIDC Provider ARN: $OIDC_PROVIDER_ARN"
    ```
+
+   ### 2. Create IAM Role for GitHub Actions
+
+   ```bash
+   # Create trust policy
+   cat > trust-policy.json << 'EOF'
+   {
+       "Version": "2012-10-17",
+       "Statement": [
+           {
+               "Effect": "Allow",
+               "Principal": {
+                   "Federated": "arn:aws:iam::617692575193:oidc-provider/token.actions.githubusercontent.com"
+               },
+               "Action": "sts:AssumeRoleWithWebIdentity",
+               "Condition": {
+                   "StringEquals": {
+                       "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+                   },
+                   "StringLike": {
+                       "token.actions.githubusercontent.com:sub": "repo:your-org/your-repo:*"
+                   }
+               }
+           }
+       ]
+   }
+   EOF
+
+   # Create role
+   aws iam create-role \
+     --role-name github-actions-role \
+     --assume-role-policy-document file://trust-policy.json
+
+   # Attach necessary policies
+   aws iam put-role-policy \
+     --role-name github-actions-role \
+     --policy-name github-actions-policy \
+     --policy-document file://role-aws/github-actions-policy.json
+   ```
+
+   ### 3. Configure GitHub Repository
+
+   1. Go to repository settings
+   2. Navigate to Secrets and variables > Actions
+   3. Add new repository secret:
+     - Name: `AWS_ROLE_ARN`
+     - Value: `arn:aws:iam::617692575193:role/github-actions-role`
+
+   ### 4. Verify Configuration
+
+   ```bash
+   # Test role assumption
+   aws sts assume-role-with-web-identity \
+     --role-arn arn:aws:iam::617692575193:role/github-actions-role \
+     --role-session-name "GitHubActions" \
+     --web-identity-token "token" \
+     --duration-seconds 900
+   ```
+
+   ### Notes:
+   - Thumbprint `6938fd4d98bab03faadb97b34396831e3780aea1` adalah valid untuk GitHub Actions
+   - Ganti `your-org/your-repo` dengan nama organisasi dan repository Anda
+   - Role ARN akan berbeda sesuai dengan AWS account Anda
 
 ## Usage Guide
 
